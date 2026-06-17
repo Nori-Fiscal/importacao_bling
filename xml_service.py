@@ -928,7 +928,6 @@ def processar_xml(
     mapa_fiscal: Optional[Dict[str, Dict]] = None,
     camex_lookup: Optional[Callable[[str, str], List[Dict]]] = None,
     ttd409_lookup: Optional[Callable[[str], List[Dict]]] = None,
-    produtos_lookup: Optional[Callable[[str], Optional[Dict]]] = None,
     conferir_ncm_fn: Optional[Callable[[str, str], Dict]] = None,
     registrar_div_fn: Optional[Callable[[str, str, str, str, str, str], None]] = None,
 ) -> Tuple[Optional[bytes], Dict]:
@@ -948,14 +947,14 @@ def processar_xml(
         stats["erros"].append(f"Erro ao ler o XML: {e}")
         return None, stats
 
-    # 0. TTD409 / Decreto SC 2.128/2009 - alerta grave, nao altera o XML
+    # 0. TTD409
     if ttd409_lookup is not None:
         try:
             _verificar_ttd409(root, stats, nome_arquivo, ttd409_lookup)
         except Exception as e:
             stats["avisos"].append(f"Falha ao verificar TTD409 (ignorado): {e}")
 
-    # 0.1 CAMEX / Gecex - apenas alerta, nao altera o XML
+    # 0.1 CAMEX
     if camex_lookup is not None:
         try:
             _verificar_camex(root, stats, nome_arquivo, camex_lookup)
@@ -1005,10 +1004,10 @@ def processar_xml(
         stats["avisos"].append(f"Falha ao incluir IBS/CBS (ignorado): {e}")
 
     # 8. Padronizar descricao (sempre executa)
-        try:
-            _padronizar_descricao(root, stats, nome_arquivo)
-        except Exception as e:
-            stats["avisos"].append(f"Falha ao padronizar descricao (ignorado): {e}")
+    try:
+        _padronizar_descricao(root, stats, nome_arquivo)
+    except Exception as e:
+        stats["avisos"].append(f"Falha ao padronizar descricao (ignorado): {e}")
 
     # 9. Conferir NCM
     if conferir_ncm_fn is not None and registrar_div_fn is not None:
