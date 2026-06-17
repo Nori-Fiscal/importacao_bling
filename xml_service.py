@@ -572,25 +572,75 @@ def _adicionar_ibscbs(root: etree._Element, stats: Dict, mapa_fiscal: Optional[D
 # 8. Padronizacao de descricao
 # ---------------------------------------------------------------------------
 
-def _padronizar_descricao(root, stats, nome_arquivo, produtos_lookup):
+def _extrair_sku_desc(desc: str) -> str:
+    """Extrai codigo ALxxxx do inicio da descricao. Ex: 'AL6503PK' ou 'al6191'"""
+    m = re.match(r"^(?:REF\s+)?[Aa][Ll][0-9]+[A-Za-z0-9-]*", desc)
+    return m.group(0).upper().replace(" ", "") if m else ""
+
+
+def _limpar_descricao_duimp(desc_raw: str, codigo: str) -> str:
+    """
+    Converte descricao baguncada da DUIMP para o padrao:
+    NOME LIMPO - COD: <SKU> - MARCA: LORBEN
+
+    Regras:
+    1. Remove prefixo REF / ref
+    2. Remove SKU (ALxxxx) do inicio da descricao
+    3. Remove sufixo de cor/variante solto (ex: se cod=AL6503-PK, remove 'PK ' do inicio)
+    4. Capitaliza primeira letra se estiver em lowercase
+    """
+    if not desc_raw or not desc_raw.strip():
+        return ""
+    d = desc_raw.strip()
+    cod_norm = codigo.strip().upper().replace(" ", "")
+
+    if d.upper().startswith("REF "):
+        d = d[4:].strip()
+
+    sku_desc = _extrair_sku_desc(d)
+    if sku_desc:
+        m = re.match(re.escape(sku_desc), d, re.IGNORECASE)
+        if m:
+            d = d[m.end():].strip()
+
+    if "-" in cod_norm:
+        suf = cod_norm.split("-", 1)[1]
+        if suf:
+            m = re.match(rf"^{re.escape(suf)}\s+", d, re.IGNORECASE)
+            if m:
+                d = d[m.end():].strip()
+
+    if d and d[0].islower():
+        d = d[0].upper() + d[1:]
+
+    d = re.sub(r"\s+", " ", d).strip()
+    return f"{d} - CÓD: {cod_norm} - MARCA: LORBEN"
+
+
+def _padronizar_descricao(root, stats, nome_arquivo):
+    """Substitui xProd pela descricao padronizada, sem consultar base."""
     for det in root.xpath(".//*[local-name()='det']"):
         prod_nodes = det.xpath("./*[local-name()='prod']")
-        if not prod_nodes: continue
+        if not prod_nodes:
+            continue
         prod = prod_nodes[0]
         nitem = det.get("nItem", "")
         sku = (_get_text(prod, "cProd") or "").strip()
-        if not sku: continue
+        if not sku:
+            continue
         xprod_orig = _get_text(prod, "xProd") or ""
-        try: produto = produtos_lookup(sku)
-        except Exception: produto = None
-        if produto and produto.get("descricao_padrao"):
-            nova = produto["descricao_padrao"]
+        nova = _limpar_descricao_duimp(xprod_orig, sku)
+        if nova and nova != xprod_orig:
             for x in prod.xpath("./*[local-name()='xProd']"):
-                if (x.text or "").strip() != nova:
-                    x.text = nova; stats["descricoes_padronizadas"] += 1
-        else:
-            stats["descricoes_nao_encontradas"].append({"Arquivo XML": nome_arquivo, "nItem": nitem, "SKU": sku, "Descricao original": xprod_orig})
-            stats["avisos"].append(f"SKU {sku} (item {nitem}): sem descricao padrao.")
+                x.text = nova
+                stats["descricoes_padronizadas"] += 1
+        elif not nova:
+            stats["descricoes_nao_encontradas"].append({
+                "Arquivo XML": nome_arquivo,
+                "nItem": nitem,
+                "SKU": sku,
+                "Descricao original": xprod_orig,
+            })
 
 
 # ---------------------------------------------------------------------------
@@ -868,8 +918,7 @@ def processar_xml(
     conferir_ncm_fn: Optional[Callable[[str, str], Dict]] = None,
     registrar_div_fn: Optional[Callable[[str, str, str, str, str, str], None]] = None,
 ) -> Tuple[Optional[bytes], Dict]:
-    """
-    Processa um único XML NF-e aplicando todas as regras.
+    """Processa um único XML NF-e aplicando todas as regras.
     Retorna (bytes_processado, stats).
     """
     stats = _novo_stats()
@@ -941,10 +990,9 @@ def processar_xml(
     except Exception as e:
         stats["avisos"].append(f"Falha ao incluir IBS/CBS (ignorado): {e}")
 
-    # 8. Padronizar descricao
-    if produtos_lookup is not None:
+    # 8. Padronizar descricao (sempre executa)
         try:
-            _padronizar_descricao(root, stats, nome_arquivo, produtos_lookup)
+            _padronizar_descricao(root, stats, nome_arquivo)
         except Exception as e:
             stats["avisos"].append(f"Falha ao padronizar descricao (ignorado): {e}")
 

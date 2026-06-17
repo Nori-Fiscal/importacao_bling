@@ -26,7 +26,7 @@ from xml_service import (
 from products_db import (
     init_db_produtos, get_produtos_stats, listar_produtos_base,
     listar_divergencias, marcar_divergencia_resolvida,
-    buscar_produto_por_sku, conferir_ncm, registrar_divergencia_ncm,
+    conferir_ncm, registrar_divergencia_ncm,
     importar_produtos_2026, importar_relprodutos01,
 )
 from decimal import Decimal
@@ -553,10 +553,10 @@ if st.session_state.stage == "input":
                     xml_out, stats = processar_xml(
                         xml_bytes, mapa_ean, nome, st.session_state.mapa_fiscal,
                         buscar_camex_por_ncm, buscar_ttd409_por_ncm,
-                        buscar_produto_por_sku, conferir_ncm, registrar_divergencia_ncm,
+                        conferir_ncm, registrar_divergencia_ncm,
                     )
                     resultados.append({"nome_original": nome, "xml_processado": xml_out, "stats": stats})
-            st.session_state.resultados = resultados
+            st.session_state.resultados
             st.session_state.stage = "results"
 
         st.rerun()
