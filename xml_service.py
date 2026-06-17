@@ -103,10 +103,19 @@ def _novo_stats() -> Dict:
         "camex_itens_detalhado": [],
 
         # TTD409 / Decreto SC 2.128/2009
-        "ttd409_bloqueios": 0,
-        "ttd409_itens_detalhado": [],
+                "ttd409_bloqueios": 0,
+                "ttd409_itens_detalhado": [],
 
-        "avisos": [],
+                # Etapa 8 — Padronizacao descricao
+                "descricoes_padronizadas": 0,
+                "descricoes_nao_encontradas": [],
+
+                # Etapa 9 — Conferencia NCM
+                "ncm_divergencias": 0,
+                "ncm_divergencias_detalhado": [],
+                "ncm_sem_base": [],
+
+                "avisos": [],
         "erros": [],
     }
 
@@ -558,6 +567,58 @@ def _adicionar_ibscbs(root: etree._Element, stats: Dict, mapa_fiscal: Optional[D
 # Pipeline principal
 # ---------------------------------------------------------------------------
 
+
+# ---------------------------------------------------------------------------
+# 8. Padronizacao de descricao
+# ---------------------------------------------------------------------------
+
+def _padronizar_descricao(root, stats, nome_arquivo, produtos_lookup):
+    for det in root.xpath(".//*[local-name()='det']"):
+        prod_nodes = det.xpath("./*[local-name()='prod']")
+        if not prod_nodes: continue
+        prod = prod_nodes[0]
+        nitem = det.get("nItem", "")
+        sku = (_get_text(prod, "cProd") or "").strip()
+        if not sku: continue
+        xprod_orig = _get_text(prod, "xProd") or ""
+        try: produto = produtos_lookup(sku)
+        except Exception: produto = None
+        if produto and produto.get("descricao_padrao"):
+            nova = produto["descricao_padrao"]
+            for x in prod.xpath("./*[local-name()='xProd']"):
+                if (x.text or "").strip() != nova:
+                    x.text = nova; stats["descricoes_padronizadas"] += 1
+        else:
+            stats["descricoes_nao_encontradas"].append({"Arquivo XML": nome_arquivo, "nItem": nitem, "SKU": sku, "Descricao original": xprod_orig})
+            stats["avisos"].append(f"SKU {sku} (item {nitem}): sem descricao padrao.")
+
+
+# ---------------------------------------------------------------------------
+# 9. Conferencia de NCM
+# ---------------------------------------------------------------------------
+
+def _conferir_ncm_produtos(root, stats, nome_arquivo, conferir_ncm_fn, registrar_div_fn):
+    for det in root.xpath(".//*[local-name()='det']"):
+        prod_nodes = det.xpath("./*[local-name()='prod']")
+        if not prod_nodes: continue
+        prod = prod_nodes[0]
+        nitem = det.get("nItem", "")
+        sku = (_get_text(prod, "cProd") or "").strip()
+        if not sku: continue
+        ncm = (_get_text(prod, "NCM") or "").strip()
+        if not ncm: continue
+        try: res = conferir_ncm_fn(sku, ncm)
+        except Exception:
+            stats["ncm_sem_base"].append({"Arquivo XML": nome_arquivo, "nItem": nitem, "SKU": sku, "NCM XML": ncm})
+            continue
+        if not res.get("ok", True):
+            stats["ncm_divergencias"] += 1
+            stats["ncm_divergencias_detalhado"].append({"Arquivo XML": nome_arquivo, "nItem": nitem, "SKU": sku, "NCM no XML": res.get("ncm_duimp",""), "NCM na Tonina": res.get("ncm_tonina",""), "NCM padrao AL": res.get("ncm_padrao_al",""), "Descricao": _get_text(prod,"xProd") or ""})
+            for a in res.get("alertas",[]): stats["avisos"].append(f"[NCM] {sku} (item {nitem}): {a}")
+            try: registrar_div_fn(sku_al=sku, sku_tonina=res.get("sku_tonina",""), ncm_duimp=res.get("ncm_duimp",""), ncm_tonina=res.get("ncm_tonina",""), ncm_padrao_al=res.get("ncm_padrao_al",""), arquivo_xml=nome_arquivo)
+            except Exception: pass
+
+
 def _resumir_camex_matches(matches: List[Dict], limite: int = 8) -> str:
     partes = []
     for m in matches[:limite]:
@@ -803,6 +864,9 @@ def processar_xml(
     mapa_fiscal: Optional[Dict[str, Dict]] = None,
     camex_lookup: Optional[Callable[[str, str], List[Dict]]] = None,
     ttd409_lookup: Optional[Callable[[str], List[Dict]]] = None,
+    produtos_lookup: Optional[Callable[[str], Optional[Dict]]] = None,
+    conferir_ncm_fn: Optional[Callable[[str, str], Dict]] = None,
+    registrar_div_fn: Optional[Callable[[str, str, str, str, str, str], None]] = None,
 ) -> Tuple[Optional[bytes], Dict]:
     """
     Processa um único XML NF-e aplicando todas as regras.
@@ -876,6 +940,20 @@ def processar_xml(
         _adicionar_ibscbs(root, stats, mapa_fiscal)
     except Exception as e:
         stats["avisos"].append(f"Falha ao incluir IBS/CBS (ignorado): {e}")
+
+    # 8. Padronizar descricao
+    if produtos_lookup is not None:
+        try:
+            _padronizar_descricao(root, stats, nome_arquivo, produtos_lookup)
+        except Exception as e:
+            stats["avisos"].append(f"Falha ao padronizar descricao (ignorado): {e}")
+
+    # 9. Conferir NCM
+    if conferir_ncm_fn is not None and registrar_div_fn is not None:
+        try:
+            _conferir_ncm_produtos(root, stats, nome_arquivo, conferir_ncm_fn, registrar_div_fn)
+        except Exception as e:
+            stats["avisos"].append(f"Falha ao conferir NCM (ignorado): {e}")
 
     # Serializar
     try:

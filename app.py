@@ -23,6 +23,12 @@ from xml_service import (
     gerar_relatorio_ttd409,
     processar_xml,
 )
+from products_db import (
+    init_db_produtos, get_produtos_stats, listar_produtos_base,
+    listar_divergencias, marcar_divergencia_resolvida,
+    buscar_produto_por_sku, conferir_ncm, registrar_divergencia_ncm,
+    importar_produtos_2026, importar_relprodutos01,
+)
 from decimal import Decimal
 
 
@@ -37,6 +43,7 @@ st.set_page_config(
 )
 
 init_db()
+init_db_produtos()
 
 # ---------------------------------------------------------------------------
 # CSS customizado
@@ -268,6 +275,75 @@ with st.sidebar:
 
     st.divider()
 
+    st.markdown("## \U0001f4e6 Base de Produtos")
+    prod_stats = get_produtos_stats()
+    c1, c2 = st.columns(2)
+    with c1: st.metric("Produtos", prod_stats["total"])
+    with c2: st.metric("C/ descricao", prod_stats["com_descricao_padrao"])
+    c3, c4 = st.columns(2)
+    with c3: st.metric("NCM Albema", prod_stats["com_ncm_al"])
+    with c4: st.metric("NCM Tonina", prod_stats["com_ncm_tonina"])
+    st.caption(f"Divergencias NCM: {prod_stats['divergencias_pendentes']}")
+
+    plan_prod = st.file_uploader("produtos_2026", type=["xlsx","xls"], key="plan_prod", label_visibility="collapsed")
+    if plan_prod:
+        if st.button("Importar descricoes", use_container_width=True, key="btn_prod"):
+            try:
+                import xlrd
+                wb = xlrd.open_workbook(file_contents=plan_prod.getvalue())
+                ws = wb.sheet_by_index(0)
+                rows = []
+                for r in range(1, ws.nrows):
+                    sku = str(ws.cell_value(r,1)).strip().replace("\t","")
+                    desc = str(ws.cell_value(r,2)).strip()
+                    und = str(ws.cell_value(r,3)).strip()
+                    ncm = str(ws.cell_value(r,4)).strip()
+                    if sku: rows.append({"sku":sku,"descricao":desc,"unidade":und,"ncm":ncm})
+                ins,upd,err = importar_produtos_2026(rows)
+                st.success(f"{ins} ins, {upd} upd" + (f", {err} err" if err else ""))
+                st.rerun()
+            except Exception as e: st.error(f"Erro: {e}")
+
+    plan_ncm = st.file_uploader("NCM Tonina", type=["xlsx","xls"], key="plan_ncm", label_visibility="collapsed")
+    if plan_ncm:
+        if st.button("Importar NCMs", use_container_width=True, key="btn_ncm"):
+            try:
+                import xlrd
+                wb = xlrd.open_workbook(file_contents=plan_ncm.getvalue())
+                ws = wb.sheet_by_index(0)
+                rows = []
+                ncols = ws.ncols
+                h = [str(ws.cell_value(0,c)).strip().lower() for c in range(min(ncols,5))]
+                if any("codigo interno" in x for x in h) or ncols <= 5:
+                    for r in range(1, ws.nrows):
+                        cod = str(ws.cell_value(r,0)).strip()
+                        ncm = str(ws.cell_value(r,1)).strip()
+                        if cod: rows.append({"codigo":cod,"ncm":ncm})
+                else:
+                    for r in range(1, ws.nrows):
+                        cod = str(ws.cell_value(r,2)).strip()
+                        ncm = str(ws.cell_value(r,24)).strip()
+                        if cod: rows.append({"codigo":cod,"ncm":ncm})
+                atu,sem,err = importar_relprodutos01(rows)
+                st.success(f"{atu} NCMs, {sem} sem match" + (f", {err} err" if err else ""))
+                st.rerun()
+            except Exception as e: st.error(f"Erro: {e}")
+
+    with st.expander("Ver base", expanded=False):
+        prods = listar_produtos_base()
+        if prods: st.dataframe(pd.DataFrame(prods), use_container_width=True, height=200)
+        else: st.info("Vazia.")
+    with st.expander(f"Divergencias NCM ({prod_stats['divergencias_pendentes']})", expanded=False):
+        divs = listar_divergencias(apenas_pendentes=True)
+        if divs:
+            st.dataframe(pd.DataFrame(divs), use_container_width=True, height=150)
+            if st.button("Resolver todas", use_container_width=True):
+                for d in divs: marcar_divergencia_resolvida(d["id"])
+                st.rerun()
+        else: st.info("Nenhuma.")
+
+    st.divider()
+
     st.markdown("## Base CAMEX/Gecex")
     camex_stats = get_camex_stats()
     c_cam_1, c_cam_2 = st.columns(2)
@@ -477,6 +553,7 @@ if st.session_state.stage == "input":
                     xml_out, stats = processar_xml(
                         xml_bytes, mapa_ean, nome, st.session_state.mapa_fiscal,
                         buscar_camex_por_ncm, buscar_ttd409_por_ncm,
+                        buscar_produto_por_sku, conferir_ncm, registrar_divergencia_ncm,
                     )
                     resultados.append({"nome_original": nome, "xml_processado": xml_out, "stats": stats})
             st.session_state.resultados = resultados
@@ -699,17 +776,22 @@ elif st.session_state.stage == "results":
     total_ibscbs = sum(r["stats"].get("ibscbs_itens_gerados", 0) for r in resultados)
     total_camex = sum(r["stats"].get("camex_alertas", 0) for r in resultados)
     total_ttd409 = sum(r["stats"].get("ttd409_bloqueios", 0) for r in resultados)
+    total_desc = sum(r["stats"].get("descricoes_padronizadas", 0) for r in resultados)
+    total_ncm_div = sum(r["stats"].get("ncm_divergencias", 0) for r in resultados)
+    total_ncm_sem = sum(len(r["stats"].get("ncm_sem_base", [])) for r in resultados)
 
-    c1, c2, c3, c4, c5, c6, c7, c8 = st.columns(8)
+    c1, c2, c3, c4, c5, c6, c7, c10 = st.columns(10)
     for col, num, lbl in [
         (c1, total_xml, "XMLs processados"),
         (c2, total_ok, "Com sucesso"),
         (c3, total_ean_criados, "EANs inseridos"),
         (c4, total_ean_ausentes, "Itens sem EAN"),
-        (c5, total_ttd409, "Bloqueios TTD409"),
-        (c6, total_camex, "Alertas CAMEX"),
-        (c7, total_icms, "ICMS zerados"),
-        (c8, total_ibscbs, "IBS/CBS gerados"),
+        (c5, total_desc, "Descricoes padronizadas"),
+        (c6, total_ncm_div, "Divergencias NCM"),
+        (c7, total_ncm_sem, "SKUs sem base"),
+        (c8, total_ttd409, "Bloqueios TTD409"),
+        (c9, total_camex, "Alertas CAMEX"),
+        (c10, total_icms, "ICMS zerados"),
     ]:
         col.markdown(_stat_card(num, lbl), unsafe_allow_html=True)
 
@@ -803,6 +885,16 @@ elif st.session_state.stage == "results":
             if camex_itens:
                 with st.expander(f"{len(camex_itens)} item(ns) em lista CAMEX/Gecex neste arquivo"):
                     st.dataframe(pd.DataFrame(camex_itens), use_container_width=True, hide_index=True)
+
+            desc_nao = s.get("descricoes_nao_encontradas", [])
+            if desc_nao:
+                with st.expander(f"\u26a0\ufe0f {len(desc_nao)} descricao(oes) nao encontrada(s)"):
+                    st.dataframe(pd.DataFrame(desc_nao), use_container_width=True, hide_index=True)
+
+            ncm_div = s.get("ncm_divergencias_detalhado", [])
+            if ncm_div:
+                with st.expander(f"\u26a0\ufe0f {len(ncm_div)} divergencia(s) de NCM", expanded=True):
+                    st.dataframe(pd.DataFrame(ncm_div), use_container_width=True, hide_index=True)
 
             # Avisos
             if s["avisos"]:
