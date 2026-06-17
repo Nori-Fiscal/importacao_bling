@@ -572,6 +572,17 @@ def _adicionar_ibscbs(root: etree._Element, stats: Dict, mapa_fiscal: Optional[D
 # 8. Padronizacao de descricao
 # ---------------------------------------------------------------------------
 
+def _normalizar_sku(codigo: str) -> str:
+    """Normaliza SKU: remove espaços ao redor de hífen, uppercase.
+    Ex: 'AL6577 -W' -> 'AL6577-W', 'al6503pk' -> 'AL6503-PK', 'AL720-R' -> 'AL720-R'"""
+    s = codigo.strip().upper().replace(" ", "")
+    # Se não tem hífen e tem letras após os dígitos, insere hífen
+    m = re.match(r"^(AL\d+)([A-Z].*)$", s)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}"
+    return s
+
+
 def _extrair_sku_desc(desc: str) -> str:
     """Extrai codigo ALxxxx do inicio da descricao. Ex: 'AL6503PK' ou 'al6191'"""
     m = re.match(r"^(?:REF\s+)?[Aa][Ll][0-9]+[A-Za-z0-9-]*", desc)
@@ -581,18 +592,19 @@ def _extrair_sku_desc(desc: str) -> str:
 def _limpar_descricao_duimp(desc_raw: str, codigo: str) -> str:
     """
     Converte descricao baguncada da DUIMP para o padrao:
-    NOME LIMPO - COD: <SKU> - MARCA: LORBEN
+    NOME LIMPO - CÓD: <SKU_NORMALIZADO> - MARCA: LORBEN
 
     Regras:
-    1. Remove prefixo REF / ref
-    2. Remove SKU (ALxxxx) do inicio da descricao
-    3. Remove sufixo de cor/variante solto (ex: se cod=AL6503-PK, remove 'PK ' do inicio)
-    4. Capitaliza primeira letra se estiver em lowercase
+    1. Normaliza o SKU (remove espacos do hifen, insere hifen se necessario)
+    2. Remove prefixo REF / ref
+    3. Remove SKU (ALxxxx) do inicio da descricao
+    4. Remove sufixo de cor/variante solto que sobrou (ex: 'PK ', 'BL ', 'gn ')
+    5. Capitaliza primeira letra se estiver em lowercase
     """
     if not desc_raw or not desc_raw.strip():
         return ""
     d = desc_raw.strip()
-    cod_norm = codigo.strip().upper().replace(" ", "")
+    cod_norm = _normalizar_sku(codigo)
 
     if d.upper().startswith("REF "):
         d = d[4:].strip()
@@ -603,6 +615,8 @@ def _limpar_descricao_duimp(desc_raw: str, codigo: str) -> str:
         if m:
             d = d[m.end():].strip()
 
+    # Remove sufixo de cor solto (ex: 'bl ', 'pk ', 'gn ', 'w ')
+    # que ficou quando o SKU na descricao estava colado (ex: 'al6368bl')
     if "-" in cod_norm:
         suf = cod_norm.split("-", 1)[1]
         if suf:
