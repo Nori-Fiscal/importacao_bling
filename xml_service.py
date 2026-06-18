@@ -675,6 +675,10 @@ def _conferir_ncm_produtos(root, stats, nome_arquivo, conferir_ncm_fn, registrar
         except Exception:
             stats["ncm_sem_base"].append({"Arquivo XML": nome_arquivo, "nItem": nitem, "SKU": sku, "NCM XML": ncm})
             continue
+        if res.get("sem_base"):
+            stats["ncm_sem_base"].append({"Arquivo XML": nome_arquivo, "nItem": nitem, "SKU": sku, "NCM XML": ncm})
+            for a in res.get("alertas", []): stats["avisos"].append(f"[NCM] {sku} (item {nitem}): {a}")
+            continue
         if not res.get("ok", True):
             stats["ncm_divergencias"] += 1
             stats["ncm_divergencias_detalhado"].append({"Arquivo XML": nome_arquivo, "nItem": nitem, "SKU": sku, "NCM no XML": res.get("ncm_duimp",""), "NCM na Tonina": res.get("ncm_tonina",""), "NCM padrao AL": res.get("ncm_padrao_al",""), "Descricao": _get_text(prod,"xProd") or ""})

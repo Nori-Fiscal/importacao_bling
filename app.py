@@ -556,7 +556,7 @@ if st.session_state.stage == "input":
                         conferir_ncm, registrar_divergencia_ncm,
                     )
                     resultados.append({"nome_original": nome, "xml_processado": xml_out, "stats": stats})
-            st.session_state.resultados
+            st.session_state.resultados = resultados
             st.session_state.stage = "results"
 
         st.rerun()
@@ -748,6 +748,7 @@ elif st.session_state.stage == "fill_ean":
                 xml_out, stats = processar_xml(
                     xml_bytes, mapa_ean, nome, st.session_state.mapa_fiscal,
                     buscar_camex_por_ncm, buscar_ttd409_por_ncm,
+                    conferir_ncm, registrar_divergencia_ncm,
                 )
                 resultados.append({"nome_original": nome, "xml_processado": xml_out, "stats": stats})
 
@@ -780,7 +781,7 @@ elif st.session_state.stage == "results":
     total_ncm_div = sum(r["stats"].get("ncm_divergencias", 0) for r in resultados)
     total_ncm_sem = sum(len(r["stats"].get("ncm_sem_base", [])) for r in resultados)
 
-    c1, c2, c3, c4, c5, c6, c7, c10 = st.columns(10)
+    c1, c2, c3, c4, c5, c6, c7, c8, c9, c10 = st.columns(10)
     for col, num, lbl in [
         (c1, total_xml, "XMLs processados"),
         (c2, total_ok, "Com sucesso"),
@@ -895,6 +896,11 @@ elif st.session_state.stage == "results":
             if ncm_div:
                 with st.expander(f"\u26a0\ufe0f {len(ncm_div)} divergencia(s) de NCM", expanded=True):
                     st.dataframe(pd.DataFrame(ncm_div), use_container_width=True, hide_index=True)
+
+            ncm_sem = s.get("ncm_sem_base", [])
+            if ncm_sem:
+                with st.expander(f"{len(ncm_sem)} SKU(s) sem base de produtos"):
+                    st.dataframe(pd.DataFrame(ncm_sem), use_container_width=True, hide_index=True)
 
             # Avisos
             if s["avisos"]:

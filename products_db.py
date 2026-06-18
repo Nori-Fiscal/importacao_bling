@@ -116,11 +116,14 @@ def buscar_produto_por_sku(sku_al: str) -> Optional[Dict]:
 
 def conferir_ncm(sku_al: str, ncm_duimp: str) -> Dict:
     ncm_norm = _ncm8(ncm_duimp)
-    r = {"sku_al": sku_al.strip().upper(), "sku_tonina":"", "ncm_duimp":ncm_norm, "ncm_padrao_al":"", "ncm_tonina":"", "ok":True, "alertas":[]}
+    r = {"sku_al": sku_al.strip().upper(), "sku_tonina":"", "ncm_duimp":ncm_norm, "ncm_padrao_al":"", "ncm_tonina":"", "ok":True, "sem_base":False, "alertas":[]}
     with _conn() as conn:
         row = conn.execute("SELECT ncm_al,ncm_tonina,sku_tonina FROM produtos_base WHERE sku_al=?", (sku_al.strip().upper(),)).fetchone()
     if not row:
-        r["alertas"].append(f"SKU {sku_al} não encontrado na base."); r["ok"]=False; return r
+        r["alertas"].append(f"SKU {sku_al} não encontrado na base.")
+        r["ok"] = False
+        r["sem_base"] = True
+        return r
     ncm_al, ncm_ton, sku_ton = row[0] or "", row[1] or "", row[2] or ""
     r["ncm_padrao_al"] = ncm_al; r["ncm_tonina"] = ncm_ton; r["sku_tonina"] = sku_ton
     if ncm_al and _ncm8(ncm_al) != ncm_norm:
