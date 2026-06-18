@@ -11,6 +11,7 @@ from typing import Dict, Optional, Tuple
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "ean_database.db")
+EAN_SEED_CSV_PATH = os.path.join(BASE_DIR, "data", "ean_base_seed.csv")
 CAMEX_CSV_PATH = os.path.join(BASE_DIR, "data", "camex_ncm_database.csv")
 TTD409_CSV_PATH = os.path.join(BASE_DIR, "data", "ttd409_exclusions.csv")
 
@@ -79,6 +80,7 @@ def init_db() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_camex_ncm ON camex_ncm_base (ncm)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_camex_lista ON camex_ncm_base (lista)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_ttd409_ncm ON ttd409_exclusoes (ncm)")
+        _seed_eans_from_csv(conn)
         _seed_camex_from_csv(conn)
         _seed_ttd409_from_csv(conn)
         conn.commit()
@@ -90,6 +92,45 @@ def _csv_sha256(path: str) -> str:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _seed_eans_from_csv(conn: sqlite3.Connection) -> None:
+    if not os.path.exists(EAN_SEED_CSV_PATH):
+        return
+
+    digest = _csv_sha256(EAN_SEED_CSV_PATH)
+    row = conn.execute(
+        "SELECT valor FROM app_meta WHERE chave = 'ean_seed_csv_sha256'"
+    ).fetchone()
+    total = conn.execute("SELECT COUNT(*) FROM ean_base").fetchone()[0]
+    if row and row[0] == digest and total > 0:
+        return
+
+    with open(EAN_SEED_CSV_PATH, newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        registros = [
+            (
+                (r.get("sku") or "").strip().upper(),
+                (r.get("ean") or "").strip(),
+                r.get("descricao") or "",
+                r.get("criado_em") or datetime.now().isoformat(),
+                r.get("atualizado_em") or datetime.now().isoformat(),
+            )
+            for r in reader
+            if (r.get("sku") or "").strip() and (r.get("ean") or "").strip()
+        ]
+
+    conn.executemany(
+        """
+        INSERT OR IGNORE INTO ean_base (sku, ean, descricao, criado_em, atualizado_em)
+        VALUES (?,?,?,?,?)
+        """,
+        registros,
+    )
+    conn.execute(
+        "INSERT OR REPLACE INTO app_meta (chave, valor) VALUES ('ean_seed_csv_sha256', ?)",
+        (digest,),
+    )
 
 
 def _seed_camex_from_csv(conn: sqlite3.Connection) -> None:

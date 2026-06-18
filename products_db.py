@@ -1,12 +1,15 @@
 """
 products_db.py — Banco de produtos para padronização de descrição e conferência de NCM.
 """
+import csv
+import hashlib
 import os, sqlite3
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "produtos_base.db")
+PRODUTOS_SEED_CSV_PATH = os.path.join(BASE_DIR, "data", "produtos_base_seed.csv")
 
 def _conn():
     return sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -41,7 +44,63 @@ def init_db_produtos():
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_div_sku ON divergencias_ncm(sku_al)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_div_res ON divergencias_ncm(resolvido)")
+        _seed_produtos_from_csv(conn)
         conn.commit()
+
+def _csv_sha256(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+def _seed_produtos_from_csv(conn):
+    if not os.path.exists(PRODUTOS_SEED_CSV_PATH):
+        return
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS app_meta (
+            chave TEXT PRIMARY KEY,
+            valor TEXT NOT NULL
+        )
+    """)
+    digest = _csv_sha256(PRODUTOS_SEED_CSV_PATH)
+    row = conn.execute("SELECT valor FROM app_meta WHERE chave = 'produtos_seed_csv_sha256'").fetchone()
+    total = conn.execute("SELECT COUNT(*) FROM produtos_base").fetchone()[0]
+    if row and row[0] == digest and total > 0:
+        return
+
+    with open(PRODUTOS_SEED_CSV_PATH, newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        registros = [
+            (
+                (r.get("sku_al") or "").strip().upper(),
+                (r.get("sku_tonina") or "").strip().upper(),
+                r.get("descricao_padrao") or "",
+                r.get("unidade") or "",
+                r.get("ncm_al") or "",
+                r.get("ncm_tonina") or "",
+                r.get("marca") or "LORBEN",
+                r.get("criado_em") or datetime.now().isoformat(),
+                r.get("atualizado_em") or datetime.now().isoformat(),
+            )
+            for r in reader
+            if (r.get("sku_al") or "").strip()
+        ]
+
+    conn.executemany(
+        """
+        INSERT OR IGNORE INTO produtos_base (
+            sku_al, sku_tonina, descricao_padrao, unidade, ncm_al, ncm_tonina,
+            marca, criado_em, atualizado_em
+        ) VALUES (?,?,?,?,?,?,?,?,?)
+        """,
+        registros,
+    )
+    conn.execute(
+        "INSERT OR REPLACE INTO app_meta (chave, valor) VALUES ('produtos_seed_csv_sha256', ?)",
+        (digest,),
+    )
 
 def _sku_ton(sku_al: str) -> str:
     s = sku_al.strip().upper()
