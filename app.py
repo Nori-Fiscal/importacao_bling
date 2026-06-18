@@ -42,6 +42,8 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+APP_VERSION = "2026-06-18.2-padronizacao"
+
 init_db()
 init_db_produtos()
 
@@ -224,6 +226,7 @@ def _render_ttd409_alertas(alertas, titulo="Itens com risco de bloqueio TTD409")
 # ---------------------------------------------------------------------------
 
 with st.sidebar:
+    st.caption(f"Versao: {APP_VERSION}")
     st.markdown("## 🗄️ Base de EANs")
 
     db_stats = get_db_stats()
