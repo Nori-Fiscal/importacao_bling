@@ -42,7 +42,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-APP_VERSION = "2026-06-18.3-seed-db"
+APP_VERSION = "2026-06-18.4-ttd409"
 
 init_db()
 init_db_produtos()
